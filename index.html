@@ -447,7 +447,7 @@ $('#patTVb').textContent = 'TV ' + fT(DATA.pattern.tv_surface);
 })();
 
 /* explain toggles */
-document.querySelectorAll('.why').forEach(b=>{
+document.querySelectorAll('.why[data-x]').forEach(b=>{
   b.addEventListener('click',()=>{
     const p=document.getElementById(b.dataset.x);
     const open=p.classList.toggle('open');
