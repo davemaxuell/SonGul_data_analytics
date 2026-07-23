@@ -127,13 +127,15 @@ section{margin-top:40px}
 .pb-bar.p5{background:repeating-linear-gradient(45deg,var(--p5) 0 1px,transparent 1px 4px) var(--p5-soft);border:1px solid var(--p5);border-left:none}
 .pb-line{display:flex;align-items:center;gap:6px}
 .pb-val{font:10px var(--mono);color:var(--muted);white-space:nowrap}
+.pb-val.zero{color:var(--pen);opacity:.75;font-style:italic}
 #triScatter svg{background-image:radial-gradient(var(--line) 1px,transparent 1px);background-size:14px 14px;border-radius:6px}
 .axis-sel{font:600 10.5px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--ink2);background:var(--plane);border:1px solid var(--line);border-radius:7px;padding:4px 8px}
 /* provenance */
 .prov{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:0;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--paper);box-shadow:var(--shadow)}
 .prov>div{padding:11px 14px;border-top:1px solid var(--line);border-left:1px solid var(--line);margin-top:-1px;margin-left:-1px}
 .prov dt{font:600 9.5px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin:0 0 3px}
-.prov dd{margin:0;font-size:12.5px;color:var(--ink);font-variant-numeric:tabular-nums;word-break:break-all}
+.prov dd{margin:0;font-size:12.5px;color:var(--ink);font-variant-numeric:tabular-nums;overflow-wrap:break-word}
+.prov dd .k{word-break:break-all}
 .prov dd.k{font-size:10.5px}
 /* grouped columns */
 .cols{display:flex;align-items:flex-end;gap:14px;height:170px;padding:6px 4px 0;border-bottom:1px solid var(--baseline);
@@ -533,8 +535,8 @@ function barList(el, rows, opts){
       <div class="pb-row" style="--d:${Math.min(ri,25)*35}ms">
         <div class="lbl">${opts.label(r)}</div>
         <div class="pb-track">
-          <div class="pb-line" data-tip="NIKL ${r.nikl}%"><i class="pb-bar p2" style="width:${(r.nikl/max*100).toFixed(2)}%"></i><span class="pb-val">${fmt(r.nikl)}</span></div>
-          <div class="pb-line" data-tip="SonGul ${r.p5}%${r.p5rank?' · synthetic rank #'+r.p5rank:''}"><i class="pb-bar p5" style="width:${(r.p5/max*100).toFixed(2)}%"></i><span class="pb-val">${fmt(r.p5)}</span></div>
+          <div class="pb-line" data-tip="NIKL ${r.nikl}%">${r.nikl>0?`<i class="pb-bar p2" style="width:${(r.nikl/max*92).toFixed(2)}%"></i>`:''}<span class="pb-val${r.nikl>0?'':' zero'}">${r.nikl>0?fmt(r.nikl):'none'}</span></div>
+          <div class="pb-line" data-tip="SonGul ${r.p5}%${r.p5rank?' · synthetic rank #'+r.p5rank:''}">${r.p5>0?`<i class="pb-bar p5" style="width:${(r.p5/max*92).toFixed(2)}%"></i>`:''}<span class="pb-val${r.p5>0?'':' zero'}">${r.p5>0?fmt(r.p5):'none'}</span></div>
         </div>
       </div>`).join('')+`</div>`;
     if(rows.length>opts.limit){
