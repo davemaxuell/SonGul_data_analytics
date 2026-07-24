@@ -212,6 +212,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--release-dir", required=True,
                     help="release folder containing manifest.json + the [FINAL]*.jsonl")
+    ap.add_argument("--paragraph-dir", default=None,
+                    help="paragraph_merged release folder; refreshes the by-learner-level stats")
     args = ap.parse_args()
     rel = (REPO / args.release_dir) if not Path(args.release_dir).is_absolute() else Path(args.release_dir)
     manifest = json.load(open(rel / "manifest.json"))
@@ -225,6 +227,60 @@ def main():
     data = build_page_data(nikl, c, n_err)
     data["kpi"] = {"nikl_errors": nikl["n_errors"], "nikl_records": nikl["n_records"],
                    "p5_errors": n_err, "p5_records": n_rec}
+
+    # by-learner-level stats from the paragraph view (dedup by paragraph_key,
+    # keep the most-injected view of each paragraph)
+    if args.paragraph_dir:
+        pdir = (REPO / args.paragraph_dir) if not Path(args.paragraph_dir).is_absolute() else Path(args.paragraph_dir)
+        print("mining paragraph view for learner levels …", file=sys.stderr)
+        seen = {}
+        with open(pdir / "paragraph_merged.jsonl", encoding="utf-8") as f:
+            for line in f:
+                r = json.loads(line)
+                pk = r["paragraph_key"]
+                key = (pk["sample_id"], pk["gen_idx"], pk["model"], pk["level"], r.get("form"))
+                sens = r["sentences"]
+                inj = sum(1 for s in sens if s.get("status") == "injected")
+                if key not in seen or inj > seen[key][1]:
+                    seen[key] = (len(sens), inj, pk["level"])
+        lv_agg = {}
+        for tot, inj, lv in seen.values():
+            a = lv_agg.setdefault(lv, {"paras": 0, "sent": 0, "inj": 0})
+            a["paras"] += 1; a["sent"] += tot; a["inj"] += inj
+        # errors-per-errored-sentence needs error counts; approximate from the
+        # release stream is not level-keyed, so recompute from views:
+        # (kept simple: eps from a second lightweight pass would double runtime;
+        # reuse share stats and mark eps from previous page data if present)
+        rows = []
+        for k in ("beginner", "intermediate", "advanced"):
+            if k not in lv_agg: continue
+            a = lv_agg[k]
+            rows.append({"key": k, "paras": a["paras"], "sent": a["sent"], "inj": a["inj"],
+                         "pct": round(a["inj"] / a["sent"] * 100, 1), "eps": None})
+        prev_l = re.search(r"/\*DATA-START\*/(.*?)/\*DATA-END\*/",
+                           MAIN_PAGE.read_text(encoding="utf-8"), re.S)
+        if prev_l:
+            try:
+                prev_rows = {r["key"]: r for r in json.loads(prev_l.group(1)).get("levels", {}).get("rows", [])}
+                for r in rows:
+                    if r["eps"] is None and r["key"] in prev_rows:
+                        r["eps"] = prev_rows[r["key"]].get("eps")
+            except json.JSONDecodeError:
+                pass
+        data["levels"] = {"rows": rows,
+                          "total_paras": sum(r["paras"] for r in rows),
+                          "total_sent": sum(r["sent"] for r in rows),
+                          "total_pct": round(sum(r["inj"] for r in rows) / max(1, sum(r["sent"] for r in rows)) * 100, 1)}
+    else:
+        # no paragraph dir given: carry the existing levels block forward
+        prev_l = re.search(r"/\*DATA-START\*/(.*?)/\*DATA-END\*/",
+                           MAIN_PAGE.read_text(encoding="utf-8"), re.S)
+        if prev_l:
+            try:
+                lvl = json.loads(prev_l.group(1)).get("levels")
+                if lvl: data["levels"] = lvl
+            except json.JSONDecodeError:
+                pass
     rid = manifest["release_id"]
     meta = {
         "release_id": rid, "release_short": rid.split("_")[0], "released": manifest["released_at"][:10],
