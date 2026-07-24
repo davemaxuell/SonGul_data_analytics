@@ -97,6 +97,29 @@ tr:hover .bar{filter:brightness(1.15)}
 .eq{font-family:var(--mono);font-size:14px;background:var(--accent-soft);border-radius:9px;padding:12px 16px;margin:10px 0;overflow-x:auto}
 .note{font-size:13px;color:var(--ink2);background:var(--plane);border:1px dashed var(--baseline);border-radius:9px;padding:10px 14px;margin:10px 0}
 .kr{color:var(--muted);font-size:12.5px}
+/* math visuals */
+.pipe{display:flex;gap:20px;align-items:center;flex-wrap:wrap;background:var(--plane);border:1px dashed var(--baseline);border-radius:12px;padding:16px 18px;margin:12px 0}
+.pipe-axes{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:6px 20px;flex:1;min-width:280px}
+.pipe-axis{display:grid;grid-template-columns:96px 1fr 34px;gap:8px;align-items:center;font-size:11px;color:var(--ink2)}
+.pipe-axis .tr{height:7px;background:var(--line);border-radius:4px;overflow:hidden}
+.pipe-axis .tr i{display:block;height:100%;border-radius:4px;background:var(--ok)}
+.pipe-axis.warn .tr i{background:var(--warn)}
+.pipe-axis b{font-variant-numeric:tabular-nums;font-weight:600;color:var(--ink)}
+.pipe-op{font-family:var(--serif);font-size:14px;color:var(--ink2);text-align:center;line-height:1.35;white-space:nowrap}
+.pipe-op .big{font-size:22px;display:block}
+.pipe-ring{display:flex;gap:10px;align-items:center}
+.pipe-ring .val{font-family:var(--serif);font-size:26px;color:var(--ok);font-variant-numeric:tabular-nums}
+.viz{margin:8px 0 12px}
+.tvrow{display:grid;grid-template-columns:76px 1fr;gap:10px;align-items:center;margin:4px 0;font-size:11px;color:var(--muted)}
+.tvbar{display:flex;height:18px;border-radius:5px;overflow:hidden;gap:2px}
+.tvbar i{display:flex;align-items:center;justify-content:center;font:600 10px var(--mono);color:var(--ink);height:100%}
+.seg-a{background:repeating-linear-gradient(45deg,var(--p2) 0 1px,transparent 1px 4px) var(--p2-soft);border:1px solid var(--p2)}
+.seg-b{background:repeating-linear-gradient(45deg,var(--p5) 0 1px,transparent 1px 4px) var(--p5-soft);border:1px solid var(--p5)}
+.seg-mv{background:repeating-linear-gradient(45deg,var(--pen) 0 2px,transparent 2px 5px);border:1px dashed var(--pen);color:var(--pen)}
+.waffle{display:grid;grid-template-columns:repeat(20,11px);gap:3px;margin:8px 0}
+.waffle i{width:11px;height:11px;border-radius:2px;background:var(--accent)}
+.waffle i.miss{background:transparent;border:1.5px solid var(--pen)}
+.wleg{font-size:11.5px;color:var(--muted)}
 @media (prefers-reduced-motion:reduce){.tog,td .bar{transition:none}}
 </style>
 
@@ -127,6 +150,9 @@ tr:hover .bar{filter:brightness(1.15)}
   <h2>How the replication score was calculated<span class="ko">전체 재현 점수 계산</span></h2>
   <p class="small">One similarity score per axis, all on a 0–1 scale, averaged with equal weights. Nothing hidden: every input number is on the main report's scorecard.</p>
 
+  <h2 style="font-size:16px">The whole calculation, in one picture<span class="ko">한눈에 보기</span></h2>
+  <div id="pipeViz"></div>
+
   <h2 style="font-size:16px">Step 1 — score each axis</h2>
   <div class="twrap"><table>
     <thead><tr><th>Axis</th><th>What is compared</th><th>Metric</th><th class="num">Score</th></tr></thead>
@@ -141,9 +167,9 @@ tr:hover .bar{filter:brightness(1.15)}
   <div class="twrap"><table>
     <thead><tr><th style="width:170px">Metric</th><th>Meaning</th></tr></thead>
     <tbody>
-      <tr><td class="k">TV distance</td><td>Line up both datasets' percentage breakdowns, add up the absolute differences, divide by 2. Result: the fraction of one distribution you would have to move to make them identical. 0 = identical, 1 = nothing in common. Example: real {REP 60%, OM 40%} vs synthetic {REP 50%, OM 50%} → TV = (|60−50| + |40−50|) / 2 / 100 = 0.10 → similarity 0.90.<br><span class="kr">두 비율 분포의 절대 차이 합 ÷ 2. 한 분포를 다른 분포로 만들기 위해 옮겨야 하는 질량 비율. 0=동일.</span></td></tr>
-      <tr><td>mass coverage</td><td><span id="mCov"></span> means: pick a random real error, that is the chance its exact 3-part label is produced by our pipeline (counted over real labels that exist in the synthetic set at least once).<br><span class="kr">합성에도 존재하는 실제 라벨들의 실제 비중 합. 실제 오류 하나를 뽑았을 때 그 라벨이 합성에도 있을 확률.</span></td></tr>
-      <tr><td class="k">Spearman ρ</td><td>Rank the shared error-word pairs by frequency in each dataset, then correlate the two rankings. 1 = same order, 0 = unrelated. Ours: <span id="mRho"></span> on the real top-50.<br><span class="kr">공통 어절 쌍을 양쪽에서 빈도 순위로 매겨 순위 상관을 계산. 1=순서 동일.</span></td></tr>
+      <tr><td class="k">TV distance</td><td><div class="viz" id="vizTV"></div>Line up both datasets' percentage breakdowns, add up the absolute differences, divide by 2. Result: the fraction of one distribution you would have to move to make them identical. 0 = identical, 1 = nothing in common. Example: real {REP 60%, OM 40%} vs synthetic {REP 50%, OM 50%} → TV = (|60−50| + |40−50|) / 2 / 100 = 0.10 → similarity 0.90.<br><span class="kr">두 비율 분포의 절대 차이 합 ÷ 2. 한 분포를 다른 분포로 만들기 위해 옮겨야 하는 질량 비율. 0=동일.</span></td></tr>
+      <tr><td>mass coverage</td><td><div class="viz" id="vizCov"></div><span id="mCov"></span> means: pick a random real error, that is the chance its exact 3-part label is produced by our pipeline (counted over real labels that exist in the synthetic set at least once).<br><span class="kr">합성에도 존재하는 실제 라벨들의 실제 비중 합. 실제 오류 하나를 뽑았을 때 그 라벨이 합성에도 있을 확률.</span></td></tr>
+      <tr><td class="k">Spearman ρ</td><td><div class="viz" id="vizRho"></div>Rank the shared error-word pairs by frequency in each dataset, then correlate the two rankings. 1 = same order, 0 = unrelated. Ours: <span id="mRho"></span> on the real top-50.<br><span class="kr">공통 어절 쌍을 양쪽에서 빈도 순위로 매겨 순위 상관을 계산. 1=순서 동일.</span></td></tr>
       <tr><td class="k">cosine</td><td>Shape similarity of two share vectors (angle between them). Shown on the report as supporting evidence; not part of the overall mean.<br><span class="kr">두 비율 벡터의 모양 유사도. 참고 지표이며 전체 평균에는 포함되지 않음.</span></td></tr>
     </tbody>
   </table></div>
@@ -260,6 +286,63 @@ function renderTable(t){
   <span class="kr"><br>의도적으로 동일 가중치 — 특정 축을 우대하지 않아 점수를 유리하게 조정할 수 없습니다. 축별 수치가 근거이고 평균은 요약일 뿐입니다. 설계상 차이 3축을 제외한 순수 재현 5축 평균은 ${(pure*100).toFixed(1)}%.</span>`;
   document.getElementById('mCov').textContent = M.triples.coverage+'%';
   document.getElementById('mRho').textContent = fT(M.pairs.spearman50);
+  /* ── one-picture pipeline: 8 axis bars → average → ring ── */
+  (function(){
+    const axes=[['Location',s1,0],['Recipe',s2,0],['Realized',s3,1],['Level',s4,0],
+                ['Combos',s5,0],['Words',s6,0],['Density',s7,1],['L1 mix',s8,1]];
+    const mean=(s1+s2+s3+s4+s5+s6+s7+s8)/8;
+    document.getElementById('pipeViz').innerHTML = `<div class="pipe">
+      <div class="pipe-axes">${axes.map(([n,v,w])=>`
+        <div class="pipe-axis${w?' warn':''}"><span>${n}</span>
+          <span class="tr"><i style="width:${(v*100).toFixed(0)}%"></i></span><b>${(v*100).toFixed(0)}%</b></div>`).join('')}
+      </div>
+      <div class="pipe-op">add all 8<span class="big">÷ 8</span>같은 무게로 평균</div>
+      <div class="pipe-ring">
+        <svg viewBox="0 0 60 60" width="62" height="62">
+          <circle cx="30" cy="30" r="24" fill="none" stroke="var(--line)" stroke-width="6"/>
+          <circle cx="30" cy="30" r="24" fill="none" stroke="var(--ok)" stroke-width="6" stroke-linecap="round"
+            transform="rotate(-90 30 30)" stroke-dasharray="${(mean*150.8).toFixed(1)} 150.8"/>
+        </svg><span class="val">${(mean*100).toFixed(1)}%</span>
+      </div></div>
+      <p class="small">Each bar is one axis score from Step 1 (green = fidelity target, amber = by-design delta). No weights, no tuning — just the average.
+      <span class="kr">막대 하나 = Step 1 점수 하나. 가중치 없이 단순 평균.</span></p>`;
+  })();
+
+  /* ── TV distance demo: two mixes, the moved mass ── */
+  document.getElementById('vizTV').innerHTML = `
+    <div class="tvrow"><span>real 실제</span><div class="tvbar"><i class="seg-a" style="width:60%">REP 60%</i><i class="seg-a" style="width:40%;opacity:.55">OM 40%</i></div></div>
+    <div class="tvrow"><span>synthetic 합성</span><div class="tvbar"><i class="seg-b" style="width:50%">REP 50%</i><i class="seg-b" style="width:50%;opacity:.55">OM 50%</i></div></div>
+    <div class="tvrow"><span>must move</span><div class="tvbar"><i class="seg-mv" style="width:10%">10%</i><i style="width:90%;border:none;color:var(--muted);justify-content:flex-start;padding-left:8px">→ TV = .10 → similarity 90%</i></div></div>`;
+
+  /* ── coverage waffle: 100 real errors, how many have their label in synthetic ── */
+  (function(){
+    const cov=Math.round(M.triples.coverage);
+    document.getElementById('vizCov').innerHTML =
+      `<div class="waffle">${Array.from({length:100},(_,i)=>`<i${i<cov?'':' class="miss"'}></i>`).join('')}</div>
+       <div class="wleg"><i style="display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--accent);vertical-align:-1px"></i> label exists in synthetic (${cov})&nbsp;&nbsp;<i style="display:inline-block;width:10px;height:10px;border-radius:2px;border:1.5px solid var(--pen);vertical-align:-1px"></i> missing (${100-cov}) — out of 100 random real errors</div>`;
+  })();
+
+  /* ── Spearman bump chart: real rank vs synthetic rank, top word pairs ── */
+  (function(){
+    const rows=[...DATA.pair].sort((a,b)=>b.nc-a.nc).slice(0,6);
+    const synOrder=[...DATA.pair].sort((a,b)=>b.pc-a.pc);
+    const srank=r=>synOrder.findIndex(x=>x.k===r.k)+1;
+    const W=380,H=6*26+18,x0=118,x1=W-118;
+    let g=`<svg viewBox="0 0 ${W} ${H}" style="max-width:${W}px" role="img" aria-label="rank agreement">`;
+    g+=`<text x="${x0-8}" y="12" text-anchor="end" font-size="9.5" fill="var(--muted)">REAL RANK</text>`;
+    g+=`<text x="${x1+8}" y="12" font-size="9.5" fill="var(--muted)">SYNTHETIC RANK</text>`;
+    rows.forEach((r,i)=>{
+      const sr=srank(r), yi=26*i+30, yo=26*(Math.min(sr,6)-1)+30;
+      const lbl=r.k.replace('|',' → ');
+      g+=`<text x="${x0-8}" y="${yi+3}" text-anchor="end" font-size="10.5" fill="var(--ink2)">#${i+1} ${lbl}</text>`;
+      g+=`<line x1="${x0}" y1="${yi}" x2="${x1}" y2="${yo}" stroke="var(--accent)" stroke-width="2" stroke-opacity="${sr===i+1?0.9:0.45}"/>`;
+      g+=`<circle cx="${x0}" cy="${yi}" r="3" fill="var(--accent)"/><circle cx="${x1}" cy="${yo}" r="3" fill="var(--accent)"/>`;
+      g+=`<text x="${x1+8}" y="${yo+3}" font-size="10.5" fill="var(--ink2)">#${sr}</text>`;
+    });
+    g+=`</svg><div class="wleg">Nearly parallel lines = both datasets rank the same mistakes on top → ρ ${fT(M.pairs.spearman50)}.<span class="kr"> 선이 평행할수록 순위 일치.</span></div>`;
+    document.getElementById('vizRho').innerHTML=g;
+  })();
+
   document.getElementById('mathFoot').textContent =
     `Denominators: every share uses its own dataset's total error count (${DATA.metrics.kpi.nikl_errors.toLocaleString('en-US')} real / ${DATA.metrics.kpi.p5_errors.toLocaleString('en-US')} synthetic). TV is computed on the full union support — every observed code, not just the charted top-N. Data: this page's four tabs hold the complete tables those numbers come from.`;
 })();

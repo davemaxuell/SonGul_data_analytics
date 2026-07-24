@@ -74,6 +74,17 @@ h1{font-size:clamp(26px,4vw,38px)}
 .gloss{color:var(--muted);font-size:10px;font-family:var(--sans)}
 .score-row .metric b{font-size:13px;color:var(--ink);font-weight:600}
 .score-row .metric .tech{display:block;font-size:9.5px;color:var(--muted);margin-top:1px}
+.pipe{display:flex;gap:18px;align-items:center;flex-wrap:wrap;background:var(--paper);border:1px dashed var(--baseline);border-radius:10px;padding:12px 14px;margin:4px 0 10px}
+.pipe-axes{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:5px 18px;flex:1;min-width:260px}
+.pipe-axis{display:grid;grid-template-columns:88px 1fr 34px;gap:8px;align-items:center;font-size:11px;color:var(--ink2)}
+.pipe-axis .tr{height:7px;background:var(--line);border-radius:4px;overflow:hidden}
+.pipe-axis .tr i{display:block;height:100%;border-radius:4px;background:var(--ok)}
+.pipe-axis.warn .tr i{background:var(--warn)}
+.pipe-axis b{font-variant-numeric:tabular-nums;color:var(--ink)}
+.pipe-op{font-family:var(--serif);font-size:13px;color:var(--ink2);text-align:center;white-space:nowrap}
+.pipe-op .big{font-size:20px;display:block}
+.pipe-ring{display:flex;gap:9px;align-items:center}
+.pipe-ring .val{font-family:var(--serif);font-size:24px;color:var(--ok);font-variant-numeric:tabular-nums}
 .kpi.overall{display:flex;gap:12px;align-items:center;border-color:color-mix(in srgb,var(--ok) 35%,var(--line))}
 .kpi.overall .value{color:var(--ok);font-size:27px}
 .kpi.overall .ring{width:58px;height:58px;flex:none}
@@ -235,7 +246,8 @@ svg text{font-family:var(--sans)}
     <div><span class="n">③</span>The differences that remain are <b>on purpose</b>: lighter error density, rebalanced writer nationalities.<span class="kr">남은 차이는 의도된 설계 — 오류 밀도·모어 분포 조정.</span></div>
   </div>
   <div class="xp" id="xp-overall">
-    One similarity number per axis (the 8 gauge bars below), averaged with <b>equal weights</b>:<br>
+    One similarity number per axis (the 8 gauge bars below), averaged with <b>equal weights</b>:
+    <div id="pipeMain"></div>
     <span class="k num" id="eqOverall"></span><br>
     location · recipe · realized · level · combinations · words · density · L1. Distribution axes score <b>1 − TV distance</b>, tag combinations score <b>mass coverage</b>, error words score <b>rank correlation ρ</b>. Full derivation with formulas: <a href="explorer.html#math">data explorer → The math</a>.
     <span class="kr">축별 유사도 8개의 단순 평균(동일 가중치). 분포 축=1−TV, 조합=질량 커버리지, 어절=순위 상관 ρ. 전체 유도 과정은 데이터 탐색기의 "The math" 탭 참고.</span>
@@ -515,6 +527,19 @@ $('#scoreRows').innerHTML = SCORE.map(([en,ko,v,m,st],i)=>`
   const mean = SCORE.reduce((a,s)=>a+s[2],0)/SCORE.length;
   countUp($('#overallVal'), mean*100, 1, '%');
   $('#eqOverall').innerHTML = '(' + SCORE.map(x=>fC(x[2])).join(' + ') + `) / 8 = ${fC(mean)} → <b>${(mean*100).toFixed(1)}%</b>`;
+  $('#pipeMain').innerHTML = `<div class="pipe">
+    <div class="pipe-axes">${SCORE.map((x,i)=>`
+      <div class="pipe-axis${x[4]==='warn'?' warn':''}"><span>${['Location','Recipe','Realized','Level','Combos','Words','Density','L1 mix'][i]}</span>
+        <span class="tr"><i style="width:${(x[2]*100).toFixed(0)}%"></i></span><b>${(x[2]*100).toFixed(0)}%</b></div>`).join('')}
+    </div>
+    <div class="pipe-op">add all 8<span class="big">÷ 8</span>같은 무게로 평균</div>
+    <div class="pipe-ring">
+      <svg viewBox="0 0 60 60" width="56" height="56">
+        <circle cx="30" cy="30" r="24" fill="none" stroke="var(--line)" stroke-width="6"/>
+        <circle cx="30" cy="30" r="24" fill="none" stroke="var(--ok)" stroke-width="6" stroke-linecap="round"
+          transform="rotate(-90 30 30)" stroke-dasharray="${(mean*150.8).toFixed(1)} 150.8"/>
+      </svg><span class="val">${(mean*100).toFixed(1)}%</span>
+    </div></div>`;
   const dash = `${(mean*150.8).toFixed(1)} 150.8`;
   whenMotion(ok=>{
     if(ok) requestAnimationFrame(()=>$('#ringFg').setAttribute('stroke-dasharray', dash));
