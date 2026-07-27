@@ -13,8 +13,10 @@ Current release: `20260721_phase5bf_paragraph_merged`, finalized 2026-07-25.
 - 612,029 paragraph records
 - 1,188,356 sentences (944,175 errored)
 - 1,436,790 error annotations
-- 82.70% replication score
+- 82.73% replication score
 - 99.7% NIKL exact-combination mass coverage
+- 47/48 actionable NIKL top-50 canonical error-morpheme pairs covered; two
+  same-surface rows are annotation artifacts and are excluded
 - SHA-256:
   `eeccd1df8c9e6f831adfeb28f5b0265dcd947959fa54f7b84123c7c45fe4cba7`
 
@@ -25,4 +27,6 @@ repository automatically after a push to `main`.
 The published build script documents the calculation. It cannot run from this
 repository alone because the source dataset and frozen NIKL reference tables
 remain in the private Kor_AI pipeline repository. Density is measured per
-errored sentence, while L1 distributions are sentence-weighted.
+errored sentence, L1 distributions are sentence-weighted, and 오류 어절
+comparisons use canonical morpheme-pair attribution rather than raw surface
+spans.

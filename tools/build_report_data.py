@@ -19,11 +19,30 @@ from collections import Counter
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-REPO = HERE.parent.parent
+WORKSPACE = HERE.parent.parent
+REPO = (
+    WORKSPACE
+    if (WORKSPACE / "1-SonGul").exists()
+    else WORKSPACE / "Kor_AI"
+)
+PHASE5_V2 = REPO / "1-SonGul/datasets/[PHASE_5_SHARED]/phase5_v2"
+if str(PHASE5_V2) not in sys.path:
+    sys.path.insert(0, str(PHASE5_V2))
+
+from error_word_pairs import is_annotation_only_pair, pair_of_error
+
 NIKL_STATS = REPO / "1-SonGul/datasets/[PHASE_2]_Correction_Dataset/dataset-EDA/Analysis with Unknown Tags/stats_report"
 NIKL_L1 = REPO / "1-SonGul/datasets/[PHASE_5_SHARED]/multi_error_matrices/_stats.json"
-MAIN_PAGE = HERE / "PHASE2_VS_PHASE5_ERROR_EDA_20260714.html"
-EXPL_PAGE = HERE / "PHASE2_VS_PHASE5_ERROR_EDA_20260714_EXPLORER.html"
+MAIN_PAGE = (
+    HERE / "PHASE2_VS_PHASE5_ERROR_EDA_20260714.html"
+    if (HERE / "PHASE2_VS_PHASE5_ERROR_EDA_20260714.html").exists()
+    else HERE.parent / "index.html"
+)
+EXPL_PAGE = (
+    HERE / "PHASE2_VS_PHASE5_ERROR_EDA_20260714_EXPLORER.html"
+    if (HERE / "PHASE2_VS_PHASE5_ERROR_EDA_20260714_EXPLORER.html").exists()
+    else HERE.parent / "explorer.html"
+)
 
 
 # ---------- NIKL side (frozen reference) ----------
@@ -113,8 +132,11 @@ def mine_release(jsonl_path):
                 c["spat"][sp] += 1
                 c["triple"][f"{a}|{lv}|{pt}"] += 1
                 c["striple"][f"{a}|{lv}|{sp}"] += 1
-                w = (e.get("wrong_text") or "").strip() or "∅"
-                cr = (e.get("correct_text") or "").strip() or "∅"
+                # NIKL's 오류-어절 baseline is morpheme-level. Phase 5
+                # surface spans can be larger when a coda is fused into a
+                # Hangul syllable, so use the injector's canonical attribution
+                # key (with the legacy coda fallback) for like-for-like scoring.
+                w, cr = pair_of_error(e)
                 c["pair"][f"{w}|{cr}"] += 1
                 c["engine"][e.get("engine_used") or "?"] += 1
                 rid = e.get("rule_id") or ""
@@ -221,15 +243,42 @@ def build_page_data(nikl, c, PT):
     p5_pair = {k: v / PT for k, v in c["pair"].items()}
     top50 = [k for k, _ in sorted(nikl["pair"].items(), key=lambda x: -x[1])[:50]]
     p5_rank = {k: i + 1 for i, (k, _) in enumerate(sorted(c["pair"].items(), key=lambda x: -x[1]))}
-    pair_rows = [{"pair": k, "nikl": round(nikl_pair.get(k, 0) * 100, 3),
-                  "p5": round(p5_pair.get(k, 0) * 100, 3), "p5rank": p5_rank.get(k)} for k in top50]
-    shared50 = [k for k in top50 if k in p5_pair]
-    rho = spearman([nikl_pair[k] for k in shared50], [p5_pair[k] for k in shared50])
+    annotation_only = [
+        k for k in top50 if is_annotation_only_pair(tuple(k.split("|", 1)))
+    ]
+    actionable50 = [k for k in top50 if k not in annotation_only]
+    pair_rows = [
+        {
+            "pair": k,
+            "nikl": round(nikl_pair.get(k, 0) * 100, 3),
+            "p5": round(p5_pair.get(k, 0) * 100, 3),
+            "p5rank": p5_rank.get(k),
+            "annotation_only": k in annotation_only,
+        }
+        for k in top50
+    ]
+    shared_actionable = [k for k in actionable50 if k in p5_pair]
+    rho = spearman(
+        [nikl_pair[k] for k in shared_actionable],
+        [p5_pair[k] for k in shared_actionable],
+    )
     u200 = set(sorted(nikl_pair, key=lambda k: -nikl_pair[k])[:200]) | \
            set(sorted(p5_pair, key=lambda k: -p5_pair[k])[:200])
+    u200 = {
+        k for k in u200
+        if not is_annotation_only_pair(tuple(k.split("|", 1)))
+    }
     pairs = {"rows": pair_rows,
-             "in_top30": sum(1 for r in pair_rows[:20] if r["p5rank"] and r["p5rank"] <= 30),
-             "shared50": len(shared50),
+             "in_top30": sum(1 for r in pair_rows[:20]
+                             if not r["annotation_only"]
+                             and r["p5rank"] and r["p5rank"] <= 30),
+             # Keep shared50 for older page consumers; it now means shared
+             # actionable rows in the NIKL top-50.
+             "shared50": len(shared_actionable),
+             "actionable50": len(actionable50),
+             "covered_actionable50": len(shared_actionable),
+             "missing_actionable50": len(actionable50) - len(shared_actionable),
+             "annotation_only50": len(annotation_only),
              "spearman50": round(rho, 3) if rho is not None else None,
              "cos200": round(cosine({k: nikl_pair.get(k, 0) for k in u200},
                                     {k: p5_pair.get(k, 0) for k in u200}), 4),
@@ -266,6 +315,18 @@ def union_table(nc, pc, nt, pt):
              "pc": pc.get(k, 0), "pp": round(pc.get(k, 0) / pt * 100, 3)}
             for k in set(nc) | set(pc)]
     rows.sort(key=lambda r: -r["nc"])
+    return rows
+
+
+def pair_union_table(nc, pc, nt, pt):
+    """Build the explorer pair table and identify non-injectable NIKL rows."""
+    rows = union_table(nc, pc, nt, pt)
+    for row in rows:
+        parts = row["k"].split("|", 1)
+        row["annotation_only"] = (
+            len(parts) == 2
+            and is_annotation_only_pair(tuple(parts))
+        )
     return rows
 
 
@@ -505,7 +566,12 @@ def main():
              "area": union_table(nikl["area"], c["area"], NT, PT),
              "level": union_table(nikl["level"], c["level"], NT, PT),
              "triple": union_table(nikl["triple"], c["striple"], NT, PT),
-             "pair": union_table(nikl["pair"], dict(Counter(c["pair"]).most_common(2000)), NT, PT),
+             "pair": pair_union_table(
+                 nikl["pair"],
+                 dict(Counter(c["pair"]).most_common(2000)),
+                 NT,
+                 PT,
+             ),
              "metrics": {"area": {"tv": data["area"]["tv"], "cos": data["area"]["cos"]},
                          "pattern": {"tv_scheme": data["pattern"]["tv_scheme"],
                                      "tv_surface": data["pattern"]["tv_surface"]},
