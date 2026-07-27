@@ -9,7 +9,7 @@ tab) re-renders from those blocks — no other edits needed for a new release.
 
 Usage:
   python build_report_data.py \
-    --release-dir "generated-dataset-records/phase5_errors/releases/20260714_phase5b-f_5model"
+    --release-dir "generated-dataset-records/phase5_errors/releases/20260721_phase5bf_paragraph_merged"
 
 Narrative explainer paragraphs (the "? · 설명" panels) intentionally keep
 hand-written prose; the script prints a reminder to re-read them.
@@ -55,19 +55,54 @@ def load_nikl():
 
 # ---------- Phase 5 side (stream the release) ----------
 
+def error_groups(record):
+    """Return error lists for flat or paragraph-merged Phase 5 records."""
+    recipe = record.get("recipe") or {}
+    if isinstance(recipe.get("errors"), list):
+        return [recipe["errors"]]
+    sentences = record.get("sentences")
+    if isinstance(sentences, list):
+        groups = []
+        for sentence in sentences:
+            if not isinstance(sentence, dict):
+                continue
+            errors = sentence.get("errors")
+            groups.append(errors if isinstance(errors, list) else [])
+        return groups or [[]]
+    return [[]]
+
 def mine_release(jsonl_path):
     c = {k: Counter() for k in
-         ("area level pattern triple spat striple pair engine family l1 nerr lane").split()}
+         ("area level pattern triple spat striple pair engine family l1 nerr lane "
+          "sentence level_paras level_sentences level_injected level_errors").split()}
     n_records = n_errors = 0
     with open(jsonl_path, encoding="utf-8") as f:
         for line in f:
             r = json.loads(line)
-            rec = r.get("recipe", {})
-            errs = rec.get("errors", [])
+            rec = r.get("recipe") or {}
+            groups = error_groups(r)
+            errs = [error for group in groups for error in group]
             n_records += 1
-            c["nerr"][len(errs)] += 1
-            c["l1"][rec.get("l1") or "UNKNOWN"] += 1
+            c["sentence"]["total"] += len(groups)
+            for group in groups:
+                if group:
+                    # NIKL's density reference is defined over errored
+                    # sentences. Paragraph records therefore contribute one
+                    # observation per errored sentence, not one per paragraph.
+                    c["nerr"][len(group)] += 1
+                    c["sentence"]["with_errors"] += 1
+            # The NIKL L1 reference is sentence-weighted as well.
+            c["l1"][rec.get("l1") or r.get("l1") or "UNKNOWN"] += len(groups)
             c["lane"][r.get("generation_source", {}).get("distribution_lane", "?")] += 1
+
+            paragraph_key = r.get("paragraph_key")
+            if isinstance(paragraph_key, dict):
+                learner_level = paragraph_key.get("level") or "unknown"
+                c["level_paras"][learner_level] += 1
+                c["level_sentences"][learner_level] += len(groups)
+                c["level_injected"][learner_level] += sum(bool(group) for group in groups)
+                c["level_errors"][learner_level] += len(errs)
+
             for e in errs:
                 n_errors += 1
                 a = e.get("scheme_area") or "UNKNOWN"
@@ -87,6 +122,38 @@ def mine_release(jsonl_path):
             if n_records % 100000 == 0:
                 print(f"  …{n_records:,} records", file=sys.stderr)
     return c, n_records, n_errors
+
+
+def build_level_stats(c):
+    """Build learner-level paragraph stats from the exact release stream."""
+    rows = []
+    for key in ("beginner", "intermediate", "advanced", "unknown"):
+        paragraphs = c["level_paras"].get(key, 0)
+        sentences = c["level_sentences"].get(key, 0)
+        injected = c["level_injected"].get(key, 0)
+        errors = c["level_errors"].get(key, 0)
+        if not paragraphs:
+            continue
+        rows.append({
+            "key": key,
+            "paras": paragraphs,
+            "sent": sentences,
+            "inj": injected,
+            "pct": round(injected / sentences * 100, 1) if sentences else 0,
+            "eps": round(errors / injected, 2) if injected else None,
+        })
+    if not rows:
+        return None
+    total_sentences = sum(row["sent"] for row in rows)
+    total_injected = sum(row["inj"] for row in rows)
+    return {
+        "rows": rows,
+        "total_paras": sum(row["paras"] for row in rows),
+        "total_sent": total_sentences,
+        "total_injected": total_injected,
+        "total_pct": round(total_injected / total_sentences * 100, 1)
+        if total_sentences else 0,
+    }
 
 
 # ---------- comparison (same math as the pages document) ----------
@@ -147,7 +214,9 @@ def build_page_data(nikl, c, PT):
         "scatter": [[round(sh * 100, 3), round(p5_tri.get(t_, 0) * 100, 3), t_]
                     for t_, sh in sorted(nikl_tri.items(), key=lambda x: -x[1])[:120]],
         "tv": round(tv(nikl_tri, p5_tri), 4), "coverage": round(cov * 100, 1),
-        "n_nikl": len(nikl["triple"]), "n_p5": len(c["striple"])}
+        "n_nikl": len(nikl["triple"]), "n_p5": len(c["striple"]),
+        "n_shared": sum(key in p5_tri for key in nikl_tri),
+        "n_missing": sum(key not in p5_tri for key in nikl_tri)}
     nikl_pair = {k: v / NT for k, v in nikl["pair"].items()}
     p5_pair = {k: v / PT for k, v in c["pair"].items()}
     top50 = [k for k, _ in sorted(nikl["pair"].items(), key=lambda x: -x[1])[:50]]
@@ -213,7 +282,7 @@ def main():
     ap.add_argument("--release-dir", required=True,
                     help="release folder containing manifest.json + the [FINAL]*.jsonl")
     ap.add_argument("--paragraph-dir", default=None,
-                    help="paragraph_merged release folder; refreshes the by-learner-level stats")
+                    help="legacy fallback paragraph view for a flat release")
     args = ap.parse_args()
     rel = (REPO / args.release_dir) if not Path(args.release_dir).is_absolute() else Path(args.release_dir)
     manifest = json.load(open(rel / "manifest.json"))
@@ -222,15 +291,27 @@ def main():
     print(f"mining {jsonl.name} …", file=sys.stderr)
     nikl = load_nikl()
     c, n_rec, n_err = mine_release(jsonl)
-    assert n_err == manifest["artifact"]["error_annotations"], "error count != manifest"
+    expected_errors = (
+        manifest["artifact"].get("error_annotations")
+        or manifest.get("composition", {}).get("total_error_annotations")
+    )
+    assert expected_errors is not None, "manifest has no expected error count"
+    assert n_err == expected_errors, "error count != manifest"
+    assert n_rec == manifest["artifact"]["records"], "record count != manifest"
 
     data = build_page_data(nikl, c, n_err)
     data["kpi"] = {"nikl_errors": nikl["n_errors"], "nikl_records": nikl["n_records"],
-                   "p5_errors": n_err, "p5_records": n_rec}
+                   "p5_errors": n_err, "p5_records": n_rec,
+                   "p5_sentences": c["sentence"]["total"],
+                   "p5_error_sentences": c["sentence"]["with_errors"]}
 
-    # by-learner-level stats from the paragraph view (dedup by paragraph_key,
-    # keep the most-injected view of each paragraph)
-    if args.paragraph_dir:
+    # Paragraph releases carry all learner-level counts in the final stream.
+    # This keeps the chart on the same denominator as the published artifact.
+    level_stats = build_level_stats(c)
+    if level_stats:
+        data["levels"] = level_stats
+    elif args.paragraph_dir:
+        # Compatibility path for rebuilding an older flat release.
         pdir = (REPO / args.paragraph_dir) if not Path(args.paragraph_dir).is_absolute() else Path(args.paragraph_dir)
         print("mining paragraph view for learner levels …", file=sys.stderr)
         seen = {}
@@ -281,41 +362,144 @@ def main():
                 if lvl: data["levels"] = lvl
             except json.JSONDecodeError:
                 pass
-    rid = manifest["release_id"]
-    meta = {
-        "release_id": rid, "release_short": rid.split("_")[0], "released": manifest["released_at"][:10],
-        "artifact_file": manifest["artifact"]["file"], "sha256": manifest["artifact"]["sha256"],
-        "bytes": manifest["artifact"]["bytes"],
-        "nikl_errors": nikl["n_errors"], "nikl_records": nikl["n_records"], "nikl_essays": 7748,
-        "source_line": f"{Path(manifest['source']['file']).parent.name} · {manifest['source']['records']:,} rows",
-        "source_sha_short": manifest["source"]["sha256"][:8] + "…" + manifest["source"]["sha256"][-12:],
-        "judge": {"injected": manifest["judging"]["injected_errors"],
-                  "approved": manifest["judging"]["approved_errors"],
-                  "rejected": manifest["judging"]["rejected_errors"]},
-        "records": {"full": manifest["judging"]["fully_accepted_records"],
-                    "partial": manifest["judging"]["partially_accepted_records"],
-                    "rejected": manifest["judging"]["fully_rejected_records"]},
-        "run_window": f"{manifest['run']['started_at'][:10]} → {manifest['run']['completed_at'][:10]}"
-                      f" · {manifest['run']['input_chunks']} chunks · {manifest['run']['workers']} workers",
-        "engines_line": "rule {:.1%} (deterministic morpheme edits) · LLM {:.1%}".format(
-            c["engine"].get("rule", 0) / n_err, c["engine"].get("llm", 0) / n_err),
-        "derived_line": "(update manually if a derived view exists for this release)",
-        "schema": manifest["artifact"]["schema_version"],
-    }
-    # Preserve hand-maintained META fields from the current page: the LLM model
-    # suffix on the engines line, and the derived-view note (only meaningful for
-    # the release it was written for).
+    # Read the existing prose-only suffix before rebuilding provenance.
     cur = re.search(r"/\*META-START\*/(.*?)/\*META-END\*/", MAIN_PAGE.read_text(encoding="utf-8"), re.S)
+    prev = {}
     if cur:
         try:
             prev = json.loads(cur.group(1))
-            tail = re.search(r"LLM [\d.]+% (\(.+\))$", prev.get("engines_line", ""))
-            if tail:
-                meta["engines_line"] += " " + tail.group(1)
-            if prev.get("release_id") == rid and "(update manually" not in prev.get("derived_line", ""):
-                meta["derived_line"] = prev["derived_line"]
-        except (json.JSONDecodeError, KeyError):
-            pass
+        except json.JSONDecodeError:
+            prev = {}
+
+    rid = manifest["release_id"]
+    artifact = manifest["artifact"]
+    finalized_at = manifest.get("finalized_at") or manifest.get("released_at")
+    schema_versions = artifact.get("schema_versions") or [artifact.get("schema_version", "UNKNOWN")]
+    schema = " / ".join(dict.fromkeys(item.split(" (", 1)[0] for item in schema_versions))
+    engines_line = "rule {:.1%} (deterministic morpheme edits) · LLM {:.1%}".format(
+        c["engine"].get("rule", 0) / n_err, c["engine"].get("llm", 0) / n_err)
+    tail = re.search(r"LLM [\d.]+% (\(.+\))$", prev.get("engines_line", ""))
+    if tail:
+        engines_line += " " + tail.group(1)
+
+    composition = manifest.get("composition")
+    if composition:
+        # The finalized paragraph release composes the audited base run with
+        # later judged tail injections and strict gap-fill records. Keep the
+        # base judge ledger, but label its scope explicitly.
+        base_manifest = {}
+        for source_run in manifest.get("source_runs", []):
+            match = re.search(r"runs/completed/([^ ]+)", source_run)
+            if not match:
+                continue
+            run_id = match.group(1)
+            for release_id in (run_id, run_id.removesuffix("_fullsweep")):
+                candidate = rel.parent / release_id / "manifest.json"
+                if candidate.exists():
+                    base_manifest = json.load(open(candidate))
+                    break
+            if base_manifest:
+                break
+        judging = base_manifest.get("judging", {})
+        base_artifact = base_manifest.get("artifact", {})
+        base_run = base_manifest.get("run", {})
+        previous_judge = prev.get("judge", {})
+        previous_records = prev.get("records", {})
+        judge = {
+            "injected": judging.get("injected_errors", previous_judge.get("injected", 0)),
+            "approved": judging.get("approved_errors", previous_judge.get("approved", 0)),
+            "rejected": judging.get("rejected_errors", previous_judge.get("rejected", 0)),
+        }
+        records = {
+            "full": judging.get("fully_accepted_records", previous_records.get("full", 0)),
+            "partial": judging.get("partially_accepted_records", previous_records.get("partial", 0)),
+            "rejected": judging.get("fully_rejected_records", previous_records.get("rejected", 0)),
+        }
+        source_sha = base_artifact.get("sha256", "")
+        tail_runs = sum("tail_injection" in run for run in manifest.get("source_runs", []))
+        gapfill_records = composition.get("gapfill_records_appended", 0)
+        if base_run:
+            base_window = f"{base_run['started_at'][:10]}→{base_run['completed_at'][:10]}"
+        else:
+            base_window = "2026-07-14→2026-07-17"
+        meta = {
+            "release_id": rid,
+            "release_short": rid.split("_")[0],
+            "released": finalized_at[:10],
+            "artifact_file": artifact["file"],
+            "sha256": artifact["sha256"],
+            "bytes": artifact.get("bytes", jsonl.stat().st_size),
+            "nikl_errors": nikl["n_errors"],
+            "nikl_records": nikl["n_records"],
+            "nikl_essays": 7748,
+            "source_line": (
+                f"20260714 Phase 5B–F base + {tail_runs} tail-injection runs "
+                f"+ {gapfill_records:,} strict NIKL gap-fill records"
+            ),
+            "source_sha_short": (
+                source_sha[:8] + "…" + source_sha[-12:] + " (base)"
+                if source_sha else "see base release manifest"
+            ),
+            "judge": judge,
+            "records": records,
+            "judge_label": "Base-run judge audit",
+            "records_label": "Base-run record acceptance",
+            "run_window": (
+                f"base {base_window} · tail+gap-fill finalized {finalized_at[:10]}"
+            ),
+            "engines_line": engines_line,
+            "derived_line": (
+                f"tail injection + strict NIKL gap-fill → {n_rec:,} paragraph records "
+                f"· {c['sentence']['total']:,} sentences · {n_err:,} errors "
+                f"· {data['triples']['coverage']:.1f}% NIKL exact-combination mass coverage"
+            ),
+            "schema": schema,
+        }
+    else:
+        meta = {
+            "release_id": rid,
+            "release_short": rid.split("_")[0],
+            "released": finalized_at[:10],
+            "artifact_file": artifact["file"],
+            "sha256": artifact["sha256"],
+            "bytes": artifact.get("bytes", jsonl.stat().st_size),
+            "nikl_errors": nikl["n_errors"],
+            "nikl_records": nikl["n_records"],
+            "nikl_essays": 7748,
+            "source_line": (
+                f"{Path(manifest['source']['file']).parent.name} "
+                f"· {manifest['source']['records']:,} rows"
+            ),
+            "source_sha_short": (
+                manifest["source"]["sha256"][:8]
+                + "…"
+                + manifest["source"]["sha256"][-12:]
+            ),
+            "judge": {
+                "injected": manifest["judging"]["injected_errors"],
+                "approved": manifest["judging"]["approved_errors"],
+                "rejected": manifest["judging"]["rejected_errors"],
+            },
+            "records": {
+                "full": manifest["judging"]["fully_accepted_records"],
+                "partial": manifest["judging"]["partially_accepted_records"],
+                "rejected": manifest["judging"]["fully_rejected_records"],
+            },
+            "judge_label": "Judge audit",
+            "records_label": "Record acceptance",
+            "run_window": (
+                f"{manifest['run']['started_at'][:10]} → {manifest['run']['completed_at'][:10]}"
+                f" · {manifest['run']['input_chunks']} chunks · {manifest['run']['workers']} workers"
+            ),
+            "engines_line": engines_line,
+            "derived_line": "(no derived view recorded for this release)",
+            "schema": schema,
+        }
+        if (
+            prev.get("release_id") == rid
+            and "(update manually" not in prev.get("derived_line", "")
+        ):
+            meta["derived_line"] = prev["derived_line"]
     NT, PT = nikl["n_errors"], n_err
     edata = {"meta": {"nikl_errors": NT, "p5_errors": PT, "release_short": meta["release_short"]},
              "area": union_table(nikl["area"], c["area"], NT, PT),
