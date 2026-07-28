@@ -682,13 +682,16 @@ barList($('#l1Bars'), DATA.l1.rows.map(r=>({lbl:r.l1,nikl:r.nikl,p5:r.p5})), {so
 /* learner-level section (from the paragraph view) — renders only when data exists */
 if(DATA.levels){
   $('#levels').hidden = false;
-  const LK = {beginner:'초급 beginner', intermediate:'중급 intermediate', advanced:'고급 advanced', unknown:'수준 정보 없음 · unavailable'};
-  const L = DATA.levels.rows;
+  const LK = {beginner:'초급 beginner', intermediate:'중급 intermediate', advanced:'고급 advanced'};
+  // Section is the three CEFR-style proficiency tiers only. Rows with no
+  // proficiency (gap-fill / zero-pair single-sentence units carry level
+  // "unknown"/"?") are not learner levels — keep them out of this chart.
+  const L = DATA.levels.rows.filter(r => LK[r.key]);
   const bar1 = (el, rows, val, sfx, tip) => {
     const max = rows.reduce((a,r)=>Math.max(a,val(r)),.001);
     el.innerHTML = '<div class="pbars">'+rows.map((r,i)=>`
       <div class="pb-row" style="--d:${i*60}ms">
-        <div class="lbl">${LK[r.key]||r.key}<br><span class="gloss">${r.paras.toLocaleString('en-US')} paragraphs</span></div>
+        <div class="lbl">${LK[r.key]||r.key}<br><span class="gloss">${r.sent.toLocaleString('en-US')} sentences</span></div>
         <div class="pb-track"><div class="pb-line" data-tip="${tip(r)}">
           <i class="pb-bar p5" style="width:${(val(r)/max*88).toFixed(2)}%"></i>
           <span class="pb-val">${val(r)}${sfx}</span>
