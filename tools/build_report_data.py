@@ -9,7 +9,7 @@ tab) re-renders from those blocks — no other edits needed for a new release.
 
 Usage:
   python build_report_data.py \
-    --release-dir "generated-dataset-records/phase5_errors/releases/20260721_phase5bf_paragraph_merged"
+    --release-dir "generated-dataset-records/phase5_errors/releases/20260728_phase5bf_error_word_zero_coverage"
 
 Narrative explainer paragraphs (the "? · 설명" panels) intentionally keep
 hand-written prose; the script prints a reminder to re-read them.
@@ -19,12 +19,7 @@ from collections import Counter
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-WORKSPACE = HERE.parent.parent
-REPO = (
-    WORKSPACE
-    if (WORKSPACE / "1-SonGul").exists()
-    else WORKSPACE / "Kor_AI"
-)
+REPO = HERE.parent.parent
 PHASE5_V2 = REPO / "1-SonGul/datasets/[PHASE_5_SHARED]/phase5_v2"
 if str(PHASE5_V2) not in sys.path:
     sys.path.insert(0, str(PHASE5_V2))
@@ -33,16 +28,8 @@ from error_word_pairs import is_annotation_only_pair, pair_of_error
 
 NIKL_STATS = REPO / "1-SonGul/datasets/[PHASE_2]_Correction_Dataset/dataset-EDA/Analysis with Unknown Tags/stats_report"
 NIKL_L1 = REPO / "1-SonGul/datasets/[PHASE_5_SHARED]/multi_error_matrices/_stats.json"
-MAIN_PAGE = (
-    HERE / "PHASE2_VS_PHASE5_ERROR_EDA_20260714.html"
-    if (HERE / "PHASE2_VS_PHASE5_ERROR_EDA_20260714.html").exists()
-    else HERE.parent / "index.html"
-)
-EXPL_PAGE = (
-    HERE / "PHASE2_VS_PHASE5_ERROR_EDA_20260714_EXPLORER.html"
-    if (HERE / "PHASE2_VS_PHASE5_ERROR_EDA_20260714_EXPLORER.html").exists()
-    else HERE.parent / "explorer.html"
-)
+MAIN_PAGE = HERE / "PHASE2_VS_PHASE5_ERROR_EDA_20260714.html"
+EXPL_PAGE = HERE / "PHASE2_VS_PHASE5_ERROR_EDA_20260714_EXPLORER.html"
 
 
 # ---------- NIKL side (frozen reference) ----------
@@ -132,7 +119,7 @@ def mine_release(jsonl_path):
                 c["spat"][sp] += 1
                 c["triple"][f"{a}|{lv}|{pt}"] += 1
                 c["striple"][f"{a}|{lv}|{sp}"] += 1
-                # NIKL's 오류-어절 baseline is morpheme-level. Phase 5
+                # NIKL's 오류-어절 baseline is morpheme-level.  Phase 5
                 # surface spans can be larger when a coda is fused into a
                 # Hangul syllable, so use the injector's canonical attribution
                 # key (with the legacy coda fallback) for like-for-like scoring.
@@ -479,10 +466,53 @@ def main():
         source_sha = base_artifact.get("sha256", "")
         tail_runs = sum("tail_injection" in run for run in manifest.get("source_runs", []))
         gapfill_records = composition.get("gapfill_records_appended", 0)
+        replacement = manifest.get("replacement") or {}
+        surface = manifest.get("surface_qualification") or {}
+        semantic = manifest.get("semantic_qualification") or {}
+        replacement_records = replacement.get("records", 0)
+        surface_excluded = surface.get("excluded_pairs", 0)
+        semantic_excluded = semantic.get("excluded_pairs", 0)
         if base_run:
             base_window = f"{base_run['started_at'][:10]}→{base_run['completed_at'][:10]}"
         else:
             base_window = "2026-07-14→2026-07-17"
+        if replacement_records:
+            source_line = (
+                f"20260714 Phase 5B–F base + {tail_runs} tail-injection runs "
+                f"+ {gapfill_records:,} strict NIKL gap-fill records + "
+                f"{replacement_records:,} independently judged 오류 어절 "
+                f"replacements"
+            )
+            run_window = (
+                f"base {base_window} · independently judged, "
+                "semantically qualified zero-pair "
+                f"replacement finalized {finalized_at[:10]}"
+            )
+            derived_line = (
+                f"{replacement_records:,} previously absent, semantically "
+                f"qualified 오류 어절 pairs covered · "
+                f"{surface_excluded:,} non-realizable + "
+                f"{semantic_excluded:,} independently rejected annotation "
+                f"pairs fail-closed · {n_rec:,} records · "
+                f"{n_err:,} errors · "
+                f"{data['triples']['coverage']:.1f}% NIKL exact-combination "
+                "mass coverage"
+            )
+        else:
+            source_line = (
+                f"20260714 Phase 5B–F base + {tail_runs} tail-injection runs "
+                f"+ {gapfill_records:,} strict NIKL gap-fill records"
+            )
+            run_window = (
+                f"base {base_window} · tail+gap-fill finalized "
+                f"{finalized_at[:10]}"
+            )
+            derived_line = (
+                f"tail injection + strict NIKL gap-fill → {n_rec:,} "
+                f"paragraph records · {c['sentence']['total']:,} sentences · "
+                f"{n_err:,} errors · {data['triples']['coverage']:.1f}% NIKL "
+                "exact-combination mass coverage"
+            )
         meta = {
             "release_id": rid,
             "release_short": rid.split("_")[0],
@@ -493,10 +523,7 @@ def main():
             "nikl_errors": nikl["n_errors"],
             "nikl_records": nikl["n_records"],
             "nikl_essays": 7748,
-            "source_line": (
-                f"20260714 Phase 5B–F base + {tail_runs} tail-injection runs "
-                f"+ {gapfill_records:,} strict NIKL gap-fill records"
-            ),
+            "source_line": source_line,
             "source_sha_short": (
                 source_sha[:8] + "…" + source_sha[-12:] + " (base)"
                 if source_sha else "see base release manifest"
@@ -505,15 +532,9 @@ def main():
             "records": records,
             "judge_label": "Base-run judge audit",
             "records_label": "Base-run record acceptance",
-            "run_window": (
-                f"base {base_window} · tail+gap-fill finalized {finalized_at[:10]}"
-            ),
+            "run_window": run_window,
             "engines_line": engines_line,
-            "derived_line": (
-                f"tail injection + strict NIKL gap-fill → {n_rec:,} paragraph records "
-                f"· {c['sentence']['total']:,} sentences · {n_err:,} errors "
-                f"· {data['triples']['coverage']:.1f}% NIKL exact-combination mass coverage"
-            ),
+            "derived_line": derived_line,
             "schema": schema,
         }
     else:
